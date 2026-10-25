@@ -19,6 +19,7 @@ final class ViewController: UIViewController {
     private var cropEnabled = false
     private var gotFirstFrame = false
     private var wantConnected = false
+    private var autoTestDone = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -163,6 +164,7 @@ final class ViewController: UIViewController {
                 if !self.gotFirstFrame {
                     self.gotFirstFrame = true
                     self.statusLabel.isHidden = true   // 出第一帧后隐藏提示
+                    CrashCatcher.breadcrumb("firstFrame received -> schedule autotest")
                     // 隐藏自测：出帧后按 flag 文件自动触发裁剪/画中画，供远程验证。
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
                         self?.runAutoTest()
@@ -196,6 +198,10 @@ final class ViewController: UIViewController {
             guard let self = self, self.wantConnected, !self.gotFirstFrame else { return }
             self.statusLabel.text = "已发起连接，但还没收到画面。\n请确认电脑端 sender 已启动、\n地址与局域网 IP 正确。"
         }
+        // 自测兜底：无论是否出帧，连接后 6 秒也触发一次（出帧分支可能因时序未命中）。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) { [weak self] in
+            self?.runAutoTest()
+        }
     }
 
     @objc private func onCropToggle() {
@@ -214,9 +220,11 @@ final class ViewController: UIViewController {
     // 正常使用不创建该文件即完全无影响。仅用于远程无触控验证裁剪与画中画。
     private func runAutoTest() {
         let p = "/var/mobile/Documents/sv_autotest.txt"
-        guard let s = try? String(contentsOfFile: p, encoding: .utf8) else { return }
-        let cmd = s.trimmingCharacters(in: .whitespacesAndNewlines)
-        CrashCatcher.breadcrumb("autotest cmd=\(cmd)")
+        let raw = (try? String(contentsOfFile: p, encoding: .utf8)) ?? "<READ_FAIL>"
+        let cmd = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        CrashCatcher.breadcrumb("autotest fired raw=[\(cmd)] done=\(autoTestDone)")
+        if autoTestDone { return }
+        autoTestDone = true
         switch cmd {
         case "crop":
             if !cropEnabled { onCropToggle() }
