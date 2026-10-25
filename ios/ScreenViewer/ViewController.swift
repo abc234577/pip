@@ -163,6 +163,10 @@ final class ViewController: UIViewController {
                 if !self.gotFirstFrame {
                     self.gotFirstFrame = true
                     self.statusLabel.isHidden = true   // 出第一帧后隐藏提示
+                    // 隐藏自测：出帧后按 flag 文件自动触发裁剪/画中画，供远程验证。
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        self?.runAutoTest()
+                    }
                 }
                 self.displayView.enqueue(pb)
             }
@@ -204,5 +208,27 @@ final class ViewController: UIViewController {
 
     @objc private func onPiP() {
         pip.toggle()
+    }
+
+    // 隐藏自测：读 /var/mobile/Documents/sv_autotest.txt，内容为 crop / pip 时自动触发对应功能。
+    // 正常使用不创建该文件即完全无影响。仅用于远程无触控验证裁剪与画中画。
+    private func runAutoTest() {
+        let p = "/var/mobile/Documents/sv_autotest.txt"
+        guard let s = try? String(contentsOfFile: p, encoding: .utf8) else { return }
+        let cmd = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        CrashCatcher.breadcrumb("autotest cmd=\(cmd)")
+        switch cmd {
+        case "crop":
+            if !cropEnabled { onCropToggle() }
+        case "pip":
+            pip.toggle()
+        case "cropfixed":
+            // 固定裁剪到中间一块，便于验证裁剪比例（视频被防截图挡黑，主要看黄框/布局）
+            cropEnabled = true
+            cropOverlay.isHidden = false
+            currentCrop = CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5)
+        default:
+            break
+        }
     }
 }
