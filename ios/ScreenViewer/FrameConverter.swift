@@ -2,10 +2,29 @@ import Foundation
 import WebRTC
 import CoreImage
 import CoreVideo
+import Metal
 
 /// 把 RTCVideoFrame 转成 CVPixelBuffer，并按归一化裁剪矩形裁剪。
 final class FrameConverter {
-    private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+    // 关键修复（启动崩溃根因）：旧代码在存储属性初始化器里直接建 GPU CIContext：
+    //     private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+    // ViewController() 一构造（AppDelegate didFinishLaunching 阶段）就触发 CoreImage
+    // 建立 GPU/Metal 上下文。此刻 App 还没进前台、渲染服务未就绪，CoreImage 内部拿到
+    // 空指针 → 启动即 SIGSEGV（崩溃栈确认：FrameConverter.init → CoreImage）。
+    // 改为懒加载：裁剪真正用到时（App 早已前台）才创建；优先 Metal，拿不到则退化为纯
+    // 软件渲染，保证任何时机/沙盒下都不会崩。裁剪默认关闭，看屏主功能完全不依赖它。
+    private var _ciContext: CIContext?
+    private var ciContext: CIContext {
+        if let c = _ciContext { return c }
+        let c: CIContext
+        if let dev = MTLCreateSystemDefaultDevice() {
+            c = CIContext(mtlDevice: dev)
+        } else {
+            c = CIContext(options: [.useSoftwareRenderer: true])
+        }
+        _ciContext = c
+        return c
+    }
     private var pool: CVPixelBufferPool?
     private var poolW = 0, poolH = 0
 
