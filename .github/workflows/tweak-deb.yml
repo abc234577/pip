@@ -28,21 +28,14 @@ jobs:
           git clone --quiet --recursive https://github.com/theos/theos.git "$THEOS"
           echo "THEOS=$THEOS" >> "$GITHUB_ENV"
 
-      - name: Build rootless deb
+      - name: Build rootless deb (device is rootless / TweakInject)
         run: |
           set -e
           cd tweak/PiPNoShot
           make clean || true
+          rm -rf packages && mkdir -p packages
           make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
           echo "--- built packages ---"
-          ls -la packages/ || true
-
-      - name: Build rootful deb (fallback, for unc0ver/checkra1n)
-        run: |
-          set -e
-          cd tweak/PiPNoShot
-          make clean || true
-          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME= 2>/dev/null || echo "rootful build skipped/failed (ok if you are rootless)"
           ls -la packages/ || true
 
       - name: Upload deb artifacts
