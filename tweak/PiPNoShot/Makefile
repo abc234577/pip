@@ -4,7 +4,8 @@ export THEOS_PACKAGE_SCHEME = rootless
 
 # SE3 = A15 = arm64e；同时产出 arm64 兼容更多设备
 ARCHS = arm64 arm64e
-TARGET = iphone:clang:16.5:15.0
+# SDK 用 runner 现有的最新版(latest),最低部署版本 15.0 仍覆盖 iOS 16.5 设备
+TARGET = iphone:clang:latest:15.0
 
 include $(THEOS)/makefiles/common.mk
 
