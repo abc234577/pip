@@ -20,6 +20,8 @@ final class ViewController: UIViewController {
     private var gotFirstFrame = false
     private var wantConnected = false
     private var autoTestDone = false
+    private var frameCount = 0
+    private var convNilLogged = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -158,8 +160,13 @@ final class ViewController: UIViewController {
         // rtc 每帧 -> 裁剪 -> 送显
         rtc.onFrame = { [weak self] frame in
             guard let self = self else { return }
+            self.frameCount += 1
+            if self.frameCount == 1 { CrashCatcher.breadcrumb("onFrame FIRST received") }
             let crop = self.cropEnabled ? self.currentCrop : nil
-            guard let pb = self.converter.pixelBuffer(from: frame, cropRect: crop) else { return }
+            guard let pb = self.converter.pixelBuffer(from: frame, cropRect: crop) else {
+                if !self.convNilLogged { self.convNilLogged = true; CrashCatcher.breadcrumb("converter returned nil (frame dropped)") }
+                return
+            }
             DispatchQueue.main.async {
                 if !self.gotFirstFrame {
                     self.gotFirstFrame = true
