@@ -24,6 +24,10 @@ final class ViewController: UIViewController {
         layoutUI()
         bind()
         pip = PiPController(displayLayer: displayView.displayLayer)
+        // 开屏自动连接：解锁手机点图标后，无需手动输入地址或点连接，直接拉流
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            self?.onConnect()
+        }
     }
 
     private func configureAudioSession() {
@@ -67,7 +71,7 @@ final class ViewController: UIViewController {
         // 顶部地址输入
         urlField.borderStyle = .roundedRect
         urlField.placeholder = "ws://电脑IP:8080/ws"
-        urlField.text = "ws://192.168.1.100:8080/ws"
+        urlField.text = "ws://192.168.1.176:8080/ws"
         urlField.autocapitalizationType = .none
         urlField.keyboardType = .URL
         urlField.translatesAutoresizingMaskIntoConstraints = false
