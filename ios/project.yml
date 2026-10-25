@@ -8,7 +8,7 @@ options:
 packages:
   WebRTC:
     url: https://github.com/stasel/WebRTC
-    from: "125.6422.070"
+    exactVersion: "125.0.0"
 
 targets:
   ScreenViewer:

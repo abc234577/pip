@@ -18,6 +18,9 @@ jobs:
           LATEST=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
           sudo xcode-select -s "$LATEST/Contents/Developer"
 
+      - name: Install Theos deps (ldid for fake-signing, dpkg for .deb packaging)
+        run: brew install ldid dpkg make
+
       - name: Setup Theos
         run: |
           set -e
