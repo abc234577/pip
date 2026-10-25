@@ -32,19 +32,24 @@ final class WebRTCClient: NSObject {
 
         let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
         pc = WebRTCClient.factory.peerConnection(with: config, constraints: constraints, delegate: self)
+        CrashCatcher.breadcrumb("rtc.start: pc created=\(pc != nil)")
     }
 
     /// 收到 offer -> setRemote -> createAnswer -> setLocal -> 等 ICE 收完 -> 回 answer
     func handleOffer(sdp: String) {
+        let hasVideoM = sdp.contains("m=video")
+        CrashCatcher.breadcrumb("handleOffer: len=\(sdp.count) hasVideoM=\(hasVideoM)")
         let offer = RTCSessionDescription(type: .offer, sdp: sdp)
         pc?.setRemoteDescription(offer) { [weak self] err in
-            guard let self = self, err == nil else { print("setRemote err:", err as Any); return }
-            let cons = RTCMediaConstraints(
-                mandatoryConstraints: ["OfferToReceiveVideo": "true"],
-                optionalConstraints: nil)
+            guard let self = self else { return }
+            if let err = err { CrashCatcher.breadcrumb("setRemote ERR \(err)"); return }
+            CrashCatcher.breadcrumb("setRemote ok")
+            let cons = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
             self.pc?.answer(for: cons) { answer, err in
-                guard let answer = answer, err == nil else { print("answer err:", err as Any); return }
-                self.pc?.setLocalDescription(answer) { _ in
+                guard let answer = answer, err == nil else { CrashCatcher.breadcrumb("answer ERR \(String(describing: err))"); return }
+                CrashCatcher.breadcrumb("answer created len=\(answer.sdp.count)")
+                self.pc?.setLocalDescription(answer) { serr in
+                    CrashCatcher.breadcrumb("setLocal done err=\(String(describing: serr))")
                     self.waitIceThenSend()
                 }
             }
@@ -76,8 +81,12 @@ final class WebRTCClient: NSObject {
     }
 
     // 远端 track 到来时挂上渲染器
+    private var attached = false
     private func attach(_ track: RTCVideoTrack) {
+        track.isEnabled = true
         track.add(frameSink)
+        attached = true
+        CrashCatcher.breadcrumb("attach video track -> frameSink added, enabled=\(track.isEnabled)")
     }
     fileprivate func onRemoteVideoTrack(_ track: RTCVideoTrack) { attach(track) }
 }
@@ -85,12 +94,25 @@ final class WebRTCClient: NSObject {
 extension WebRTCClient: RTCPeerConnectionDelegate {
     func peerConnection(_ pc: RTCPeerConnection, didAdd rtpReceiver: RTCRtpReceiver,
                         streams: [RTCMediaStream]) {
+        let kind = rtpReceiver.track?.kind ?? "nil"
+        CrashCatcher.breadcrumb("didAdd rtpReceiver kind=\(kind)")
         if let track = rtpReceiver.track as? RTCVideoTrack {
             onRemoteVideoTrack(track)
         }
     }
+    // unified-plan 下更可靠的入轨回调；两条都挂，谁先到用谁
+    func peerConnection(_ pc: RTCPeerConnection, didStartReceivingOn transceiver: RTCRtpTransceiver) {
+        let kind = transceiver.receiver.track?.kind ?? "nil"
+        CrashCatcher.breadcrumb("didStartReceivingOn kind=\(kind)")
+        if !attached, let track = transceiver.receiver.track as? RTCVideoTrack {
+            onRemoteVideoTrack(track)
+        }
+    }
     func peerConnection(_ pc: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
-        print("[rtc] ice:", newState.rawValue)
+        CrashCatcher.breadcrumb("ice state=\(newState.rawValue)")
+    }
+    func peerConnection(_ pc: RTCPeerConnection, didChange newState: RTCPeerConnectionState) {
+        CrashCatcher.breadcrumb("pc state=\(newState.rawValue)")
     }
     // 其余 delegate 空实现
     func peerConnection(_ pc: RTCPeerConnection, didChange s: RTCSignalingState) {}
@@ -106,8 +128,15 @@ extension WebRTCClient: RTCPeerConnectionDelegate {
 /// RTCVideoRenderer 适配器，把帧透出去。
 private final class FrameSink: NSObject, RTCVideoRenderer {
     var onFrame: ((RTCVideoFrame) -> Void)?
-    func setSize(_ size: CGSize) {}
+    private var firstFrameLogged = false
+    func setSize(_ size: CGSize) {
+        CrashCatcher.breadcrumb("renderer setSize \(Int(size.width))x\(Int(size.height))")
+    }
     func renderFrame(_ frame: RTCVideoFrame?) {
+        if !firstFrameLogged {
+            firstFrameLogged = true
+            CrashCatcher.breadcrumb("renderFrame FIRST frame=\(frame != nil)")
+        }
         guard let frame = frame else { return }
         onFrame?(frame)
     }
