@@ -22,11 +22,17 @@ final class ViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        CrashCatcher.breadcrumb("viewDidLoad: begin")
         view.backgroundColor = .black
+        CrashCatcher.breadcrumb("viewDidLoad: before configureAudioSession")
         configureAudioSession()
+        CrashCatcher.breadcrumb("viewDidLoad: before layoutUI")
         layoutUI()
+        CrashCatcher.breadcrumb("viewDidLoad: before bind")
         bind()
+        CrashCatcher.breadcrumb("viewDidLoad: before PiPController")
         pip = PiPController(displayLayer: displayView.displayLayer)
+        CrashCatcher.breadcrumb("viewDidLoad: after PiPController")
         // 开屏自动连接：解锁手机点图标后，无需手动输入地址或点连接，直接拉流
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             self?.onConnect()
@@ -174,10 +180,13 @@ final class ViewController: UIViewController {
         gotFirstFrame = false
         statusLabel.isHidden = false
         statusLabel.text = "正在连接 \(url.host ?? "电脑") …"
+        CrashCatcher.breadcrumb("onConnect: before rtc.start")
         rtc.close()
         signaling.disconnect()
         rtc.start()
+        CrashCatcher.breadcrumb("onConnect: after rtc.start")
         signaling.connect(url: url)
+        CrashCatcher.breadcrumb("onConnect: after signaling.connect")
         // 5 秒还没出帧就提示，方便判断是「连上但没画面」还是「根本没连上」。
         DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
             guard let self = self, self.wantConnected, !self.gotFirstFrame else { return }
