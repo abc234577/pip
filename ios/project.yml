@@ -16,13 +16,18 @@ targets:
     platform: iOS
     sources:
       - path: ScreenViewer
+        excludes:
+          - "Info-keys.md"
     dependencies:
       - package: WebRTC
     info:
       path: ScreenViewer/Info.plist
       properties:
         CFBundleDisplayName: ScreenViewer
-        UILaunchScreen: {}
+        LSRequiresIPhoneOS: true
+        UILaunchScreen:
+          UIColorName: ""
+          UIImageRespectsSafeAreaInsets: true
         UIBackgroundModes:
           - audio
         NSLocalNetworkUsageDescription: "用于连接并实时观看你的电脑屏幕"

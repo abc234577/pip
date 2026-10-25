@@ -16,12 +16,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode (newest on runner, matches xcodegen output format)
+      - name: Select Xcode (prefer 15.x SDK close to the 16.5 deploy target)
         run: |
-          LATEST=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
-          echo "Selected $LATEST"
-          sudo xcode-select -s "$LATEST/Contents/Developer"
+          # 已装的 Xcode 全部列出
+          ls -d /Applications/Xcode_*.app 2>/dev/null || true
+          # 优先选 15.4 -> 任意 15.x -> 否则退回最新;避免用 16.x/iOS18 SDK 编出在 16.5 上静默拒启的包
+          PICK=""
+          for cand in \
+            /Applications/Xcode_15.4.app \
+            /Applications/Xcode_15.4.0.app \
+            $(ls -d /Applications/Xcode_15*.app 2>/dev/null | sort -V | tail -1) \
+            $(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1); do
+            if [ -d "$cand" ]; then PICK="$cand"; break; fi
+          done
+          echo "Selected $PICK"
+          sudo xcode-select -s "$PICK/Contents/Developer"
           xcodebuild -version
+          xcodebuild -showsdks | grep -i iphoneos || true
 
       - name: Install tools
         run: brew install xcodegen ldid
