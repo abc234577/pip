@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- 有付费开发者账号走轨道二时用。ad-hoc=装到已登记的设备; development=开发签名 -->
+    <key>method</key>
+    <string>ad-hoc</string>
+    <key>teamID</key>
+    <string>REPLACE_WITH_YOUR_TEAM_ID</string>
+    <key>signingStyle</key>
+    <string>manual</string>
+    <key>stripSwiftSymbols</key>
+    <true/>
+    <key>compileBitcode</key>
+    <false/>
+    <key>provisioningProfiles</key>
+    <dict>
+        <key>com.local.screenviewer</key>
+        <string>REPLACE_WITH_PROFILE_NAME</string>
+    </dict>
+</dict>
+</plist>

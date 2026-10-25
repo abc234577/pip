@@ -1,0 +1,48 @@
+name: ScreenViewer
+options:
+  bundleIdPrefix: com.local
+  deploymentTarget:
+    iOS: "16.5"
+  createIntermediateGroups: true
+
+packages:
+  WebRTC:
+    url: https://github.com/stasel/WebRTC
+    from: "125.6422.070"
+
+targets:
+  ScreenViewer:
+    type: application
+    platform: iOS
+    sources:
+      - path: ScreenViewer
+    dependencies:
+      - package: WebRTC
+    info:
+      path: ScreenViewer/Info.plist
+      properties:
+        CFBundleDisplayName: ScreenViewer
+        UILaunchScreen: {}
+        UIBackgroundModes:
+          - audio
+        NSLocalNetworkUsageDescription: "用于连接并实时观看你的电脑屏幕"
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+          NSAllowsArbitraryLoads: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.local.screenviewer
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_VERSION: "5.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "16.5"
+        ENABLE_BITCODE: NO

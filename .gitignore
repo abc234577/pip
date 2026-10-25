@@ -1,0 +1,25 @@
+# --- macOS / Xcode build artifacts (云端编译时会生成, 不入库) ---
+build/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcuserstate
+Pods/
+Payload/
+*.ipa
+*.app
+*.dSYM/
+ent.plist
+cert.p12
+*.mobileprovision
+
+# --- Python ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# --- misc ---
+.DS_Store
+Thumbs.db
+*.log

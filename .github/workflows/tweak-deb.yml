@@ -1,0 +1,48 @@
+name: Build PiPNoShot deb
+
+on:
+  push:
+    paths:
+      - 'tweak/**'
+      - '.github/workflows/tweak-deb.yml'
+  workflow_dispatch:
+
+jobs:
+  build-deb:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Setup Theos
+        run: |
+          set -e
+          export THEOS=$HOME/theos
+          git clone --quiet --recursive https://github.com/theos/theos.git "$THEOS"
+          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+
+      - name: Build rootless deb
+        run: |
+          set -e
+          cd tweak/PiPNoShot
+          make clean || true
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
+          echo "--- built packages ---"
+          ls -la packages/ || true
+
+      - name: Build rootful deb (fallback, for unc0ver/checkra1n)
+        run: |
+          set -e
+          cd tweak/PiPNoShot
+          make clean || true
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME= 2>/dev/null || echo "rootful build skipped/failed (ok if you are rootless)"
+          ls -la packages/ || true
+
+      - name: Upload deb artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: PiPNoShot-deb
+          path: tweak/PiPNoShot/packages/*.deb
+          if-no-files-found: error

@@ -1,0 +1,99 @@
+import Foundation
+import WebRTC
+import CoreImage
+import CoreVideo
+
+/// 把 RTCVideoFrame 转成 CVPixelBuffer，并按归一化裁剪矩形裁剪。
+final class FrameConverter {
+    private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+    private var pool: CVPixelBufferPool?
+    private var poolW = 0, poolH = 0
+
+    /// cropRect: 归一化 (0~1) 的 x,y,w,h；nil 表示不裁。
+    func pixelBuffer(from frame: RTCVideoFrame, cropRect: CGRect?) -> CVPixelBuffer? {
+        guard let src = sourcePixelBuffer(from: frame) else { return nil }
+        guard let crop = cropRect, crop != CGRect(x: 0, y: 0, width: 1, height: 1) else {
+            return src
+        }
+
+        let fullW = CVPixelBufferGetWidth(src)
+        let fullH = CVPixelBufferGetHeight(src)
+        // CIImage 原点在左下，输入的归一化 y 以左上为基准，这里翻转一次
+        let px = max(0, Int(crop.origin.x * CGFloat(fullW)))
+        let pw = max(2, Int(crop.width * CGFloat(fullW)))
+        let ph = max(2, Int(crop.height * CGFloat(fullH)))
+        let pyTop = Int(crop.origin.y * CGFloat(fullH))
+        let pyBottom = fullH - pyTop - ph
+
+        let ci = CIImage(cvPixelBuffer: src)
+            .cropped(to: CGRect(x: px, y: pyBottom, width: pw, height: ph))
+            .transformed(by: CGAffineTransform(translationX: CGFloat(-px),
+                                               y: CGFloat(-pyBottom)))
+
+        guard let dst = makeBuffer(width: pw, height: ph) else { return src }
+        ciContext.render(ci, to: dst)
+        return dst
+    }
+
+    private func sourcePixelBuffer(from frame: RTCVideoFrame) -> CVPixelBuffer? {
+        if let cv = frame.buffer as? RTCCVPixelBuffer {
+            return cv.pixelBuffer
+        }
+        // I420 兜底：转 NV12 CVPixelBuffer
+        let i420 = frame.buffer.toI420()
+        return i420ToPixelBuffer(i420)
+    }
+
+    private func i420ToPixelBuffer(_ b: RTCI420BufferProtocol) -> CVPixelBuffer? {
+        let w = Int(b.width), h = Int(b.height)
+        guard let pb = makeBuffer(width: w, height: h) else { return nil }
+        CVPixelBufferLockBaseAddress(pb, [])
+        defer { CVPixelBufferUnlockBaseAddress(pb, []) }
+
+        // Y 平面
+        if let yDst = CVPixelBufferGetBaseAddressOfPlane(pb, 0) {
+            let yStride = CVPixelBufferGetBytesPerRowOfPlane(pb, 0)
+            let ySrc = b.dataY
+            for row in 0..<h {
+                memcpy(yDst.advanced(by: row * yStride),
+                       ySrc.advanced(by: row * Int(b.strideY)), w)
+            }
+        }
+        // UV 交织（NV12）
+        if let uvDst = CVPixelBufferGetBaseAddressOfPlane(pb, 1) {
+            let uvStride = CVPixelBufferGetBytesPerRowOfPlane(pb, 1)
+            let cw = (w + 1) / 2, ch = (h + 1) / 2
+            let uSrc = b.dataU, vSrc = b.dataV
+            let dst = uvDst.assumingMemoryBound(to: UInt8.self)
+            for row in 0..<ch {
+                let dRow = dst.advanced(by: row * uvStride)
+                let uRow = uSrc.advanced(by: row * Int(b.strideU))
+                let vRow = vSrc.advanced(by: row * Int(b.strideV))
+                for col in 0..<cw {
+                    dRow[col * 2]     = uRow[col]
+                    dRow[col * 2 + 1] = vRow[col]
+                }
+            }
+        }
+        return pb
+    }
+
+    private func makeBuffer(width: Int, height: Int) -> CVPixelBuffer? {
+        if pool == nil || poolW != width || poolH != height {
+            let attrs: [String: Any] = [
+                kCVPixelBufferPixelFormatTypeKey as String:
+                    kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+                kCVPixelBufferWidthKey as String: width,
+                kCVPixelBufferHeightKey as String: height,
+                kCVPixelBufferIOSurfacePropertiesKey as String: [:]
+            ]
+            var p: CVPixelBufferPool?
+            CVPixelBufferPoolCreate(kCFAllocatorDefault, nil, attrs as CFDictionary, &p)
+            pool = p; poolW = width; poolH = height
+        }
+        guard let pool = pool else { return nil }
+        var pb: CVPixelBuffer?
+        CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pb)
+        return pb
+    }
+}

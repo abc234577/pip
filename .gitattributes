@@ -1,0 +1,9 @@
+# 保证在 macOS / Linux runner 上这些文件是 LF 换行, 避免 CRLF 导致 bash/heredoc 报错
+* text=auto eol=lf
+*.sh    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.swift text eol=lf
+*.py    text eol=lf
+*.plist text eol=lf
+*.bat   text eol=crlf

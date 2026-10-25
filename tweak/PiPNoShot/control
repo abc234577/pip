@@ -1,0 +1,9 @@
+Package: com.local.pipnoshot
+Name: PiPNoShot
+Version: 0.0.1
+Architecture: iphoneos-arm64
+Description: 让画中画(PiP)悬浮小窗在截图/录屏/AirPlay中变黑，保护隐私。
+Maintainer: local
+Author: local
+Section: Tweaks
+Depends: mobilesubstrate

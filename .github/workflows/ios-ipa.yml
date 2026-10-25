@@ -1,0 +1,119 @@
+name: Build iOS IPA
+
+# 手动触发,或 push 到 main 自动触发
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  # ============================================================
+  # 轨道一:免签名 IPA(给越狱 / TrollStore 设备,无需 Apple 账号)
+  # 产物 ScreenViewer-unsigned.ipa 可在 Actions 页面下载
+  # ============================================================
+  build-unsigned:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Install tools
+        run: brew install xcodegen ldid
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Build (no signing)
+        working-directory: ios
+        run: |
+          set -eo pipefail
+          xcodebuild \
+            -project ScreenViewer.xcodeproj \
+            -scheme ScreenViewer \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcpretty || true
+          # 确认产物存在
+          ls -la build/Build/Products/Release-iphoneos
+
+      - name: Package unsigned IPA (+ ldid 伪签名, 供 TrollStore)
+        working-directory: ios
+        run: |
+          set -eo pipefail
+          APP=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -n1)
+          echo "APP=$APP"
+          # 生成带 get-task-allow 的权限, 方便越狱环境
+          cat > ent.plist <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>get-task-allow</key><true/>
+            <key>platform-application</key><true/>
+            <key>com.apple.private.security.no-container</key><true/>
+          </dict>
+          </plist>
+          EOF
+          ldid -S./ent.plist "$APP/ScreenViewer" || ldid -S "$APP/ScreenViewer" || true
+          rm -rf Payload ScreenViewer-unsigned.ipa
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qry ScreenViewer-unsigned.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ScreenViewer-unsigned-ipa
+          path: ios/ScreenViewer-unsigned.ipa
+          if-no-files-found: error
+
+  # ============================================================
+  # 轨道二:正规签名 IPA(有 Apple 开发者账号时用; 默认跳过)
+  # 需要在仓库 Secrets 配置证书与描述文件后, 把 if 改成 true
+  # ============================================================
+  build-signed:
+    if: ${{ false }}
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate project
+        working-directory: ios
+        run: xcodegen generate
+      - name: Import signing cert
+        env:
+          CERT_P12_BASE64: ${{ secrets.CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
+        run: |
+          echo "$CERT_P12_BASE64" | base64 -d > cert.p12
+          security create-keychain -p ci build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p ci build.keychain
+          security import cert.p12 -k build.keychain -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci build.keychain
+      - name: Install provisioning profile
+        env:
+          PROFILE_BASE64: ${{ secrets.PROFILE_BASE64 }}
+        run: |
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          echo "$PROFILE_BASE64" | base64 -d > ~/Library/MobileDevice/Provisioning\ Profiles/app.mobileprovision
+      - name: Archive & export
+        working-directory: ios
+        run: |
+          xcodebuild -project ScreenViewer.xcodeproj -scheme ScreenViewer \
+            -configuration Release -sdk iphoneos -archivePath build/App.xcarchive archive
+          xcodebuild -exportArchive -archivePath build/App.xcarchive \
+            -exportOptionsPlist ExportOptions.plist -exportPath build/ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ScreenViewer-signed-ipa
+          path: ios/build/ipa/*.ipa
