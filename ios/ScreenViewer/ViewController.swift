@@ -14,8 +14,11 @@ final class ViewController: UIViewController {
     private var pip: PiPController!
 
     private let urlField = UITextField()
+    private let statusLabel = UILabel()
     private var currentCrop: CGRect = CGRect(x: 0, y: 0, width: 1, height: 1)
     private var cropEnabled = false
+    private var gotFirstFrame = false
+    private var wantConnected = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -47,14 +50,25 @@ final class ViewController: UIViewController {
             secureView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -80),
         ])
 
-        // 视频层加进防截图容器：库重写了 addSubview，会自动塞进内部安全画布
-        displayView.translatesAutoresizingMaskIntoConstraints = false
+        // 视频层加进防截图容器：库重写的 addSubview 会把它塞进内部安全画布，
+        // 并用 frame + autoresizingMask 自动铺满。这里【不要】再用 Auto Layout
+        // 把 displayView 约束到 secureView —— 它真实父视图是库内部的 clearView，
+        // 跨层约束会错位，极易被算成 0 尺寸导致黑屏（这是旧版黑屏的根因之一）。
         secureView.addSubview(displayView)
+
+        // 状态提示叠在视频层之上（连接中/已连接未出帧/断开），避免失败时纯黑无反馈。
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel.textColor = .white
+        statusLabel.font = .systemFont(ofSize: 15, weight: .medium)
+        statusLabel.textAlignment = .center
+        statusLabel.numberOfLines = 0
+        statusLabel.text = "正在连接电脑…"
+        view.addSubview(statusLabel)
         NSLayoutConstraint.activate([
-            displayView.topAnchor.constraint(equalTo: secureView.topAnchor),
-            displayView.bottomAnchor.constraint(equalTo: secureView.bottomAnchor),
-            displayView.leadingAnchor.constraint(equalTo: secureView.leadingAnchor),
-            displayView.trailingAnchor.constraint(equalTo: secureView.trailingAnchor),
+            statusLabel.centerXAnchor.constraint(equalTo: secureView.centerXAnchor),
+            statusLabel.centerYAnchor.constraint(equalTo: secureView.centerYAnchor),
+            statusLabel.leadingAnchor.constraint(greaterThanOrEqualTo: secureView.leadingAnchor, constant: 20),
+            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: secureView.trailingAnchor, constant: -20),
         ])
 
         // 裁剪框叠在上方（默认隐藏）
@@ -117,8 +131,19 @@ final class ViewController: UIViewController {
             self?.rtc.handleOffer(sdp: sdp)
         }
         signaling.onClose = { [weak self] in
+            guard let self = self else { return }
             print("[vc] signaling closed")
-            _ = self
+            DispatchQueue.main.async {
+                guard self.wantConnected else { return }
+                self.gotFirstFrame = false
+                self.statusLabel.isHidden = false
+                self.statusLabel.text = "连接断开，正在重连…"
+                // 3 秒后自动重连，避免失败后一直黑屏无反馈。
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+                    guard let self = self, self.wantConnected else { return }
+                    self.onConnect()
+                }
+            }
         }
         rtc.onAnswerReady = { [weak self] sdp in
             self?.signaling.sendAnswer(sdp: sdp)
@@ -128,7 +153,13 @@ final class ViewController: UIViewController {
             guard let self = self else { return }
             let crop = self.cropEnabled ? self.currentCrop : nil
             guard let pb = self.converter.pixelBuffer(from: frame, cropRect: crop) else { return }
-            DispatchQueue.main.async { self.displayView.enqueue(pb) }
+            DispatchQueue.main.async {
+                if !self.gotFirstFrame {
+                    self.gotFirstFrame = true
+                    self.statusLabel.isHidden = true   // 出第一帧后隐藏提示
+                }
+                self.displayView.enqueue(pb)
+            }
         }
         // 裁剪框 -> 记录归一化矩形
         cropOverlay.onCropChanged = { [weak self] norm in
@@ -139,10 +170,19 @@ final class ViewController: UIViewController {
     @objc private func onConnect() {
         view.endEditing(true)
         guard let text = urlField.text, let url = URL(string: text) else { return }
+        wantConnected = true
+        gotFirstFrame = false
+        statusLabel.isHidden = false
+        statusLabel.text = "正在连接 \(url.host ?? "电脑") …"
         rtc.close()
         signaling.disconnect()
         rtc.start()
         signaling.connect(url: url)
+        // 5 秒还没出帧就提示，方便判断是「连上但没画面」还是「根本没连上」。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+            guard let self = self, self.wantConnected, !self.gotFirstFrame else { return }
+            self.statusLabel.text = "已发起连接，但还没收到画面。\n请确认电脑端 sender 已启动、\n地址与局域网 IP 正确。"
+        }
     }
 
     @objc private func onCropToggle() {
