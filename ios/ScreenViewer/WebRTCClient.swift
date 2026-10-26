@@ -75,18 +75,49 @@ final class WebRTCClient: NSObject {
     }
 
     func close() {
+        remoteVideoTrack?.remove(frameSink)
+        remoteVideoTrack = nil
+        attached = false
         pc?.close()
         pc = nil
         iceSent = false
     }
 
     // 远端 track 到来时挂上渲染器
+    // 【黑屏根因】RTCVideoTrack 这个 ObjC 包装对象在 dealloc 时会把自己 add 过的所有
+    // renderer 从底层 native track 上 RemoveSink。旧代码只把 track 当参数传进来、没有强引用，
+    // 回调一结束包装对象就被释放 → frameSink 被摘掉 → renderFrame 永远不会被调用。
+    // 必须强持有远端 track，直到连接关闭。
+    private var remoteVideoTrack: RTCVideoTrack?
     private var attached = false
     private func attach(_ track: RTCVideoTrack) {
+        if attached, remoteVideoTrack?.trackId == track.trackId { return }  // 避免重复挂载
         track.isEnabled = true
         track.add(frameSink)
+        remoteVideoTrack = track
         attached = true
-        CrashCatcher.breadcrumb("attach video track -> frameSink added, enabled=\(track.isEnabled)")
+        CrashCatcher.breadcrumb("attach video track -> frameSink added & track RETAINED id=\(track.trackId)")
+        startStatsProbe()
+    }
+
+    // 诊断：连接后前 20 秒每 2 秒记录一次入站视频统计，便于确认是否真的在解码
+    private var statsTicks = 0
+    private func startStatsProbe() {
+        statsTicks = 0
+        func tick() {
+            guard let pc = self.pc, self.statsTicks < 10 else { return }
+            self.statsTicks += 1
+            pc.statistics { report in
+                for (_, s) in report.statistics where s.type == "inbound-rtp" {
+                    let v = s.values
+                    func g(_ k: String) -> String { v[k].map { "\($0)" } ?? "-" }
+                    if g("kind") != "video" { continue }
+                    CrashCatcher.breadcrumb("stats inbound video: pkts=\(g("packetsReceived")) lost=\(g("packetsLost")) framesRecv=\(g("framesReceived")) framesDecoded=\(g("framesDecoded")) keyFrames=\(g("keyFramesDecoded")) size=\(g("frameWidth"))x\(g("frameHeight")) decoder=\(g("decoderImplementation"))")
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { tick() }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { tick() }
     }
     fileprivate func onRemoteVideoTrack(_ track: RTCVideoTrack) { attach(track) }
 }

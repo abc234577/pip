@@ -9,9 +9,16 @@ final class ViewController: UIViewController {
     private let converter = FrameConverter()
 
     private let secureView = HeeeNoScreenShotView()     // 防截图容器（HeeeNoScreenShotView 开源库）
-    private let displayView = VideoDisplayView()        // 送显层
+    private let displayView = VideoDisplayView()        // 送显层（屏上这一份走防截图）
     private let cropOverlay = CropView()                // 裁剪框（悬浮在顶层，不被保护，纯交互）
     private var pip: PiPController!
+    // 画中画专用层：【关键】不放进防截图安全画布。
+    // 防截图是把内容塞进 secure textfield 的画布，让系统级采集（截图/录屏/AirPlay）看到黑。
+    // 但画中画小窗由系统 pipd 进程合成，也是系统级采集路径——如果 PiP 直接取防截图那一层，
+    // 小窗会被一起涂黑，画中画形同虚设。所以单独挂一个“不受保护”的层专供画中画取帧：
+    // 它铺满全屏但压在 secureView 下面被完全遮住，屏上肉眼只看得到防截图那一份（遮人耳目不变），
+    // 一旦进入画中画，系统从这个非保护层取画面 → 悬浮小窗有真实画面，退到别的 App 上也能继续看。
+    private let pipLayer = AVSampleBufferDisplayLayer()
 
     private let urlField = UITextField()
     private let statusLabel = UILabel()
@@ -34,12 +41,36 @@ final class ViewController: UIViewController {
         CrashCatcher.breadcrumb("viewDidLoad: before bind")
         bind()
         CrashCatcher.breadcrumb("viewDidLoad: before PiPController")
-        pip = PiPController(displayLayer: displayView.displayLayer)
-        CrashCatcher.breadcrumb("viewDidLoad: after PiPController")
+        pip = PiPController(displayLayer: pipLayer)   // 画中画取非保护层
+        CrashCatcher.breadcrumb("viewDidLoad: after PiPController possible=\(pip.isPossible)")
         // 开屏自动连接：解锁手机点图标后，无需手动输入地址或点连接，直接拉流
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             self?.onConnect()
         }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // pipLayer 不参与 Auto Layout，手动跟随全屏尺寸。
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        pipLayer.frame = view.bounds
+        CATransaction.commit()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // 退到后台自动把画面收进画中画小窗（配合 canStartPictureInPictureAutomaticallyFromInline）。
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(appWillResignActive),
+            name: UIApplication.willResignActiveNotification, object: nil)
+    }
+
+    @objc private func appWillResignActive() {
+        // 已出帧且画中画可用但尚未激活时，主动进入画中画，确保“按 Home 即隐藏成小窗”。
+        guard gotFirstFrame, pip != nil, pip.isPossible, !pip.isActive else { return }
+        CrashCatcher.breadcrumb("willResignActive -> start PiP")
+        pip.start()
     }
 
     private func configureAudioSession() {
@@ -49,6 +80,13 @@ final class ViewController: UIViewController {
     }
 
     private func layoutUI() {
+        // 画中画取帧层：全屏铺底，插在最底层，被 secureView 完全遮住，肉眼看不到。
+        // 它不进安全画布，所以画中画小窗能拿到真实画面；屏上视频区仍由上面的 secureView 防截图。
+        pipLayer.videoGravity = .resizeAspect
+        pipLayer.backgroundColor = UIColor.black.cgColor
+        pipLayer.frame = view.bounds
+        view.layer.insertSublayer(pipLayer, at: 0)
+
         // 防截图容器铺满安全区
         secureView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(secureView)
@@ -177,7 +215,8 @@ final class ViewController: UIViewController {
                         self?.runAutoTest()
                     }
                 }
-                self.displayView.enqueue(pb)
+                self.displayView.enqueue(pb)          // 屏上这一份（防截图）
+                self.enqueuePiP(pb)                    // 画中画取帧层（非保护，供悬浮小窗）
             }
         }
         // 裁剪框 -> 记录归一化矩形
@@ -220,7 +259,15 @@ final class ViewController: UIViewController {
     }
 
     @objc private func onPiP() {
+        CrashCatcher.breadcrumb("onPiP tap: possible=\(pip.isPossible) active=\(pip.isActive)")
         pip.toggle()
+    }
+
+    /// 把一帧喂给画中画专用层（与屏上送显分开，用各自的 CMSampleBuffer，避免共享副作用）。
+    private func enqueuePiP(_ pb: CVPixelBuffer) {
+        guard let sb = VideoDisplayView.sampleBuffer(from: pb) else { return }
+        if pipLayer.status == .failed { pipLayer.flush() }
+        if pipLayer.isReadyForMoreMediaData { pipLayer.enqueue(sb) }
     }
 
     // 隐藏自测：读 /var/mobile/Documents/sv_autotest.txt，内容为 crop / pip 时自动触发对应功能。
@@ -236,7 +283,12 @@ final class ViewController: UIViewController {
         case "crop":
             if !cropEnabled { onCropToggle() }
         case "pip":
-            pip.toggle()
+            CrashCatcher.breadcrumb("autotest PiP: possible=\(pip.isPossible) active=\(pip.isActive)")
+            pip.start()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                guard let self = self else { return }
+                CrashCatcher.breadcrumb("autotest PiP after2s: possible=\(self.pip.isPossible) active=\(self.pip.isActive)")
+            }
         case "cropfixed":
             // 固定裁剪到中间一块，便于验证裁剪比例（视频被防截图挡黑，主要看黄框/布局）
             cropEnabled = true
