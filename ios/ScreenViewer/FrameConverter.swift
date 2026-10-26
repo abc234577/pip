@@ -54,13 +54,18 @@ final class FrameConverter {
         return dst
     }
 
+    private var pathLogged = false
     private func sourcePixelBuffer(from frame: RTCVideoFrame) -> CVPixelBuffer? {
         if let cv = frame.buffer as? RTCCVPixelBuffer {
+            if !pathLogged { pathLogged = true; CrashCatcher.breadcrumb("convert path=CVPixelBuffer \(Int(frame.width))x\(Int(frame.height))") }
             return cv.pixelBuffer
         }
         // I420 兜底：转 NV12 CVPixelBuffer
         let i420 = frame.buffer.toI420()
-        return i420ToPixelBuffer(i420)
+        if !pathLogged { pathLogged = true; CrashCatcher.breadcrumb("convert path=I420 \(Int(i420.width))x\(Int(i420.height)) sY=\(i420.strideY) sU=\(i420.strideU)") }
+        let out = i420ToPixelBuffer(i420)
+        if out == nil, !failLogged { failLogged = true; CrashCatcher.breadcrumb("i420ToPixelBuffer -> nil") }
+        return out
     }
 
     private func i420ToPixelBuffer(_ b: RTCI420BufferProtocol) -> CVPixelBuffer? {
@@ -97,22 +102,37 @@ final class FrameConverter {
         return pb
     }
 
+    private var failLogged = false
     private func makeBuffer(width: Int, height: Int) -> CVPixelBuffer? {
+        let fmt = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
         if pool == nil || poolW != width || poolH != height {
             let attrs: [String: Any] = [
-                kCVPixelBufferPixelFormatTypeKey as String:
-                    kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+                kCVPixelBufferPixelFormatTypeKey as String: fmt,
                 kCVPixelBufferWidthKey as String: width,
                 kCVPixelBufferHeightKey as String: height,
                 kCVPixelBufferIOSurfacePropertiesKey as String: [:]
             ]
             var p: CVPixelBufferPool?
-            CVPixelBufferPoolCreate(kCFAllocatorDefault, nil, attrs as CFDictionary, &p)
+            let st = CVPixelBufferPoolCreate(kCFAllocatorDefault, nil, attrs as CFDictionary, &p)
+            if st != kCVReturnSuccess || p == nil, !failLogged {
+                failLogged = true; CrashCatcher.breadcrumb("pool create FAIL st=\(st) \(width)x\(height)")
+            }
             pool = p; poolW = width; poolH = height
         }
-        guard let pool = pool else { return nil }
+        // 优先用池
+        if let pool = pool {
+            var pb: CVPixelBuffer?
+            let st = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pb)
+            if st == kCVReturnSuccess, let pb = pb { return pb }
+            if !failLogged { failLogged = true; CrashCatcher.breadcrumb("pool alloc FAIL st=\(st)") }
+        }
+        // 兜底：不走池，直接建一块（对本功能足够，只是没有复用）。
         var pb: CVPixelBuffer?
-        CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pb)
+        let attrs: [String: Any] = [kCVPixelBufferIOSurfacePropertiesKey as String: [:]]
+        let st = CVPixelBufferCreate(kCFAllocatorDefault, width, height, fmt, attrs as CFDictionary, &pb)
+        if (st != kCVReturnSuccess || pb == nil), !failLogged {
+            failLogged = true; CrashCatcher.breadcrumb("CVPixelBufferCreate FAIL st=\(st) \(width)x\(height)")
+        }
         return pb
     }
 }
