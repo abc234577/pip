@@ -56,16 +56,14 @@ jobs:
           set -eo pipefail
           APP=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -n1)
           echo "APP=$APP"
-          # 生成带 get-task-allow 的权限, 方便越狱环境
+          # 只给 get-task-allow（普通沙盒 App）。实测 platform-application 会让进程拿不到
+          # Metal 设备、IOSurface 全部 -6662，画中画小窗因此全黑；去掉后 GPU/IOSurface 正常。
           cat > ent.plist <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
             <key>get-task-allow</key><true/>
-            <key>platform-application</key><true/>
-            <key>com.apple.private.security.no-sandbox</key><true/>
-            <key>com.apple.private.security.storage.AppDataContainers</key><true/>
           </dict>
           </plist>
           EOF

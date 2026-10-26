@@ -45,8 +45,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.local.screenviewer
-        MARKETING_VERSION: "1.6"
-        CURRENT_PROJECT_VERSION: "7"
+        MARKETING_VERSION: "1.7"
+        CURRENT_PROJECT_VERSION: "8"
         TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_VERSION: "5.0"
         IPHONEOS_DEPLOYMENT_TARGET: "16.5"

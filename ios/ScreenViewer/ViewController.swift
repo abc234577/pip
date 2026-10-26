@@ -297,8 +297,10 @@ final class ViewController: UIViewController {
     // 隐藏自测：读 /var/mobile/Documents/sv_autotest.txt，内容为 crop / pip 时自动触发对应功能。
     // 正常使用不创建该文件即完全无影响。仅用于远程无触控验证裁剪与画中画。
     private func runAutoTest() {
-        let p = "/var/mobile/Documents/sv_autotest.txt"
-        let raw = (try? String(contentsOfFile: p, encoding: .utf8)) ?? "<READ_FAIL>"
+        let p1 = NSHomeDirectory() + "/Documents/sv_autotest.txt"   // 沙盒内
+        let p2 = "/var/mobile/Documents/sv_autotest.txt"            // 旧路径兜底
+        let raw = (try? String(contentsOfFile: p1, encoding: .utf8))
+            ?? (try? String(contentsOfFile: p2, encoding: .utf8)) ?? "<READ_FAIL>"
         let cmd = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         CrashCatcher.breadcrumb("autotest fired raw=[\(cmd)] done=\(autoTestDone)")
         if autoTestDone { return }
