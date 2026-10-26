@@ -25,8 +25,6 @@ final class FrameConverter {
         _ciContext = c
         return c
     }
-    private var pool: CVPixelBufferPool?
-    private var poolW = 0, poolH = 0
 
     /// cropRect: 归一化 (0~1) 的 x,y,w,h；nil 表示不裁。
     func pixelBuffer(from frame: RTCVideoFrame, cropRect: CGRect?) -> CVPixelBuffer? {
@@ -102,37 +100,43 @@ final class FrameConverter {
         return pb
     }
 
+    // 3 块环形缓冲：把 IOSurface 占用钉在 3 块以内（WebRTC 解码器会吃掉大量 IOSurface，
+    // 每帧新建会触发 -6662 配额上限），并让“正在显示”和“正在写入”的缓冲错开，避免撕裂。
+    private var ring: [CVPixelBuffer] = []
+    private var ringIdx = 0
+    private var ringW = 0, ringH = 0
     private var failLogged = false
-    private func makeBuffer(width: Int, height: Int) -> CVPixelBuffer? {
+    private var logA = false, logB = false, logC = false
+
+    private func createOne(_ width: Int, _ height: Int) -> CVPixelBuffer? {
         let fmt = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
-        if pool == nil || poolW != width || poolH != height {
-            let attrs: [String: Any] = [
-                kCVPixelBufferPixelFormatTypeKey as String: fmt,
-                kCVPixelBufferWidthKey as String: width,
-                kCVPixelBufferHeightKey as String: height,
-                kCVPixelBufferIOSurfacePropertiesKey as String: [:]
-            ]
-            var p: CVPixelBufferPool?
-            let st = CVPixelBufferPoolCreate(kCFAllocatorDefault, nil, attrs as CFDictionary, &p)
-            if st != kCVReturnSuccess || p == nil, !failLogged {
-                failLogged = true; CrashCatcher.breadcrumb("pool create FAIL st=\(st) \(width)x\(height)")
-            }
-            pool = p; poolW = width; poolH = height
-        }
-        // 优先用池
-        if let pool = pool {
-            var pb: CVPixelBuffer?
-            let st = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pb)
-            if st == kCVReturnSuccess, let pb = pb { return pb }
-            if !failLogged { failLogged = true; CrashCatcher.breadcrumb("pool alloc FAIL st=\(st)") }
-        }
-        // 兜底：不走池，直接建一块（对本功能足够，只是没有复用）。
+        // 1) 优先 IOSurface（ASBDL 送显最稳）
         var pb: CVPixelBuffer?
-        let attrs: [String: Any] = [kCVPixelBufferIOSurfacePropertiesKey as String: [:]]
-        let st = CVPixelBufferCreate(kCFAllocatorDefault, width, height, fmt, attrs as CFDictionary, &pb)
-        if (st != kCVReturnSuccess || pb == nil), !failLogged {
-            failLogged = true; CrashCatcher.breadcrumb("CVPixelBufferCreate FAIL st=\(st) \(width)x\(height)")
+        let a: [String: Any] = [kCVPixelBufferIOSurfacePropertiesKey as String: [:]]
+        var st = CVPixelBufferCreate(kCFAllocatorDefault, width, height, fmt, a as CFDictionary, &pb)
+        if st == kCVReturnSuccess, let got = pb {
+            if !logA { logA = true; CrashCatcher.breadcrumb("buffer=IOSurface \(width)x\(height)") }
+            return got
         }
-        return pb
+        if !logB { logB = true; CrashCatcher.breadcrumb("IOSurface create FAIL st=\(st) -> plain") }
+        // 2) 退到普通内存缓冲（无 IOSurface），ASBDL 仍可显示
+        pb = nil
+        st = CVPixelBufferCreate(kCFAllocatorDefault, width, height, fmt, nil, &pb)
+        if st == kCVReturnSuccess, let got = pb {
+            if !logC { logC = true; CrashCatcher.breadcrumb("buffer=plain \(width)x\(height)") }
+            return got
+        }
+        if !failLogged { failLogged = true; CrashCatcher.breadcrumb("plain create FAIL st=\(st) \(width)x\(height)") }
+        return nil
+    }
+
+    private func makeBuffer(width: Int, height: Int) -> CVPixelBuffer? {
+        if ring.isEmpty || ringW != width || ringH != height {
+            ring.removeAll(); ringW = width; ringH = height; ringIdx = 0
+            for _ in 0..<3 { if let b = createOne(width, height) { ring.append(b) } }
+            if ring.isEmpty { return nil }
+        }
+        ringIdx = (ringIdx + 1) % ring.count
+        return ring[ringIdx]
     }
 }
