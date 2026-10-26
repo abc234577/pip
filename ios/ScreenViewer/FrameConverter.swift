@@ -3,6 +3,7 @@ import WebRTC
 import CoreImage
 import CoreVideo
 import Metal
+import IOSurface
 
 /// 把 RTCVideoFrame 转成 CVPixelBuffer，并按归一化裁剪矩形裁剪。
 final class FrameConverter {
@@ -108,9 +109,36 @@ final class FrameConverter {
     private var failLogged = false
     private var logA = false, logB = false, logC = false
 
+    private var diagDone = false
+    /// 一次性诊断：逐个尝试几种 IOSurface 创建方式，把每种的返回码写进日志。
+    private func diagIOSurface(_ width: Int, _ height: Int) {
+        if diagDone { return }
+        diagDone = true
+        CrashCatcher.breadcrumb("diag MTLDevice=\(MTLCreateSystemDefaultDevice() != nil)")
+        let fmts: [(String, OSType)] = [
+            ("NV12full", kCVPixelFormatType_420YpCbCr8BiPlanarFullRange),
+            ("NV12video", kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange),
+            ("BGRA", kCVPixelFormatType_32BGRA)]
+        for (name, f) in fmts {
+            for (sz, w, h) in [("full", width, height), ("64", 64, 64)] {
+                var pb: CVPixelBuffer?
+                let a: [String: Any] = [kCVPixelBufferIOSurfacePropertiesKey as String: [:],
+                                        kCVPixelBufferMetalCompatibilityKey as String: true]
+                let st = CVPixelBufferCreate(kCFAllocatorDefault, w, h, f, a as CFDictionary, &pb)
+                let hasSurf = pb.map { CVPixelBufferGetIOSurface($0) != nil } ?? false
+                CrashCatcher.breadcrumb("diag IOSurf \(name) \(sz) st=\(st) surf=\(hasSurf)")
+            }
+        }
+        let s = IOSurface(properties: [.width: 64, .height: 64,
+                                       .pixelFormat: kCVPixelFormatType_32BGRA,
+                                       .bytesPerElement: 4])
+        CrashCatcher.breadcrumb("diag IOSurface(properties:) 64x64 BGRA -> \(s != nil)")
+    }
+
     private func createOne(_ width: Int, _ height: Int) -> CVPixelBuffer? {
+        diagIOSurface(width, height)
         let fmt = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
-        // 1) 优先 IOSurface（ASBDL 送显最稳）
+        // 1) 优先 IOSurface（画中画由系统进程合成，跨进程只认 IOSurface 缓冲）
         var pb: CVPixelBuffer?
         let a: [String: Any] = [kCVPixelBufferIOSurfacePropertiesKey as String: [:]]
         var st = CVPixelBufferCreate(kCFAllocatorDefault, width, height, fmt, a as CFDictionary, &pb)

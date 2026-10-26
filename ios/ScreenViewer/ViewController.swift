@@ -210,6 +210,7 @@ final class ViewController: UIViewController {
                     self.gotFirstFrame = true
                     self.statusLabel.isHidden = true   // 出第一帧后隐藏提示
                     CrashCatcher.breadcrumb("firstFrame received -> schedule autotest")
+                    self.startHealthLog()
                     // 隐藏自测：出帧后按 flag 文件自动触发裁剪/画中画，供远程验证。
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
                         self?.runAutoTest()
@@ -264,10 +265,33 @@ final class ViewController: UIViewController {
     }
 
     /// 把一帧喂给画中画专用层（与屏上送显分开，用各自的 CMSampleBuffer，避免共享副作用）。
+    private var pipEnq = 0, pipNotReady = 0, pipSbNil = 0, pipFailed = 0
+    private var healthTimer: Timer?
+    private var healthTicks = 0
+
     private func enqueuePiP(_ pb: CVPixelBuffer) {
-        guard let sb = VideoDisplayView.sampleBuffer(from: pb) else { return }
-        if pipLayer.status == .failed { pipLayer.flush() }
-        if pipLayer.isReadyForMoreMediaData { pipLayer.enqueue(sb) }
+        guard let sb = VideoDisplayView.sampleBuffer(from: pb) else { pipSbNil += 1; return }
+        if pipLayer.status == .failed {
+            pipFailed += 1
+            if pipFailed <= 3 { CrashCatcher.breadcrumb("pipLayer FAILED err=\(String(describing: pipLayer.error))") }
+            pipLayer.flush()
+        }
+        if pipLayer.isReadyForMoreMediaData { pipLayer.enqueue(sb); pipEnq += 1 } else { pipNotReady += 1 }
+    }
+
+    /// 前后台都持续记录：App 状态、收帧数、画中画层送帧情况，判断退后台后是否还在出帧。
+    private func startHealthLog() {
+        guard healthTimer == nil else { return }
+        let t = Timer(timeInterval: 5.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            self.healthTicks += 1
+            if self.healthTicks > 72 { self.healthTimer?.invalidate(); return }
+            let st = UIApplication.shared.applicationState
+            let s = st == .active ? "active" : (st == .background ? "background" : "inactive")
+            CrashCatcher.breadcrumb("health app=\(s) frames=\(self.frameCount) pipEnq=\(self.pipEnq) notReady=\(self.pipNotReady) sbNil=\(self.pipSbNil) layerStatus=\(self.pipLayer.status.rawValue) pipActive=\(self.pip?.isActive ?? false)")
+        }
+        RunLoop.main.add(t, forMode: .common)
+        healthTimer = t
     }
 
     // 隐藏自测：读 /var/mobile/Documents/sv_autotest.txt，内容为 crop / pip 时自动触发对应功能。
