@@ -54,7 +54,7 @@ final class ViewController: UIViewController {
         // pipLayer 不参与 Auto Layout，手动跟随全屏尺寸。
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        pipLayer.frame = view.bounds
+        pipLayer.frame = CGRect(x: 0, y: 0, width: 2, height: 2)   // 只留 2x2：截图时安全层被剔除也露不出画面；PiP 小窗取的是送入的帧，与层尺寸无关
         CATransaction.commit()
     }
 
@@ -80,11 +80,11 @@ final class ViewController: UIViewController {
     }
 
     private func layoutUI() {
-        // 画中画取帧层：全屏铺底，插在最底层，被 secureView 完全遮住，肉眼看不到。
+        // 画中画取帧层：缩成 2x2 插在最底层，被 secureView 遮住；截图时不会把画面漏出来。
         // 它不进安全画布，所以画中画小窗能拿到真实画面；屏上视频区仍由上面的 secureView 防截图。
         pipLayer.videoGravity = .resizeAspect
         pipLayer.backgroundColor = UIColor.black.cgColor
-        pipLayer.frame = view.bounds
+        pipLayer.frame = CGRect(x: 0, y: 0, width: 2, height: 2)   // 只留 2x2：截图时安全层被剔除也露不出画面；PiP 小窗取的是送入的帧，与层尺寸无关
         view.layer.insertSublayer(pipLayer, at: 0)
 
         // 防截图容器铺满安全区
